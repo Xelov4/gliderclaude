@@ -1,0 +1,381 @@
+"""Window detection and targeting for poker client."""
+import cv2
+import numpy as np
+import tkinter as tk
+from tkinter import ttk, messagebox
+from typing import List, Dict, Tuple, Optional
+from loguru import logger
+
+try:
+    import win32gui
+    import win32con
+    import win32api
+    import win32ui
+    WIN32_AVAILABLE = True
+except ImportError:
+    WIN32_AVAILABLE = False
+    logger.warning("win32 modules not available - window detection disabled")
+
+from ..config.settings import settings
+
+
+class WindowDetector:
+    """Detect and target specific windows."""
+    
+    def __init__(self):
+        self.windows = []
+        self.target_window = None
+        
+    def find_windows(self, title_contains: str = "") -> List[Dict]:
+        """Find all windows, optionally filtered by title."""
+        if not WIN32_AVAILABLE:
+            messagebox.showerror("Error", "Window detection not available - win32 modules required")
+            return []
+            
+        self.windows = []
+        
+        def enum_windows_callback(hwnd, lParam):
+            if win32gui.IsWindowVisible(hwnd):
+                window_title = win32gui.GetWindowText(hwnd)
+                if window_title and (not title_contains or title_contains.lower() in window_title.lower()):
+                    rect = win32gui.GetWindowRect(hwnd)
+                    self.windows.append({
+                        'hwnd': hwnd,
+                        'title': window_title,
+                        'rect': rect,
+                        'width': rect[2] - rect[0],
+                        'height': rect[3] - rect[1]
+                    })
+        
+        win32gui.EnumWindows(enum_windows_callback, None)
+        return self.windows
+    
+    def select_window_interactive(self) -> Optional[Dict]:
+        """Show GUI to select target window."""
+        self.find_windows()
+        
+        if not self.windows:
+            messagebox.showerror("No Windows", "No windows found!")
+            return None
+        
+        # Create selection dialog
+        dialog = tk.Toplevel()
+        dialog.title("Select Poker Client Window")
+        dialog.geometry("600x400")
+        dialog.grab_set()  # Make modal
+        
+        selected_window = None
+        
+        # Instructions
+        tk.Label(dialog, text="Select your poker client window:", 
+                font=("Arial", 12, "bold")).pack(pady=10)
+        
+        # Listbox with scrollbar
+        frame = tk.Frame(dialog)
+        frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        
+        scrollbar = ttk.Scrollbar(frame)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        listbox = tk.Listbox(frame, yscrollcommand=scrollbar.set, font=("Courier", 10))
+        listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=listbox.yview)
+        
+        # Populate listbox
+        for i, window in enumerate(self.windows):
+            display_text = f"{window['title'][:50]:<50} | {window['width']}x{window['height']}"
+            listbox.insert(tk.END, display_text)
+        
+        # Preview frame
+        preview_frame = tk.Frame(dialog)
+        preview_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        preview_label = tk.Label(preview_frame, text="Select a window to see preview", 
+                                font=("Arial", 10))
+        preview_label.pack()
+        
+        def on_select(event):
+            selection = listbox.curselection()
+            if selection:
+                idx = selection[0]
+                window = self.windows[idx]
+                preview_label.config(text=f"Selected: {window['title']} ({window['width']}x{window['height']})")
+        
+        listbox.bind('<<ListboxSelect>>', on_select)
+        
+        # Buttons
+        button_frame = tk.Frame(dialog)
+        button_frame.pack(pady=20)
+        
+        def on_ok():
+            nonlocal selected_window
+            selection = listbox.curselection()
+            if selection:
+                selected_window = self.windows[selection[0]]
+                dialog.destroy()
+            else:
+                messagebox.showwarning("No Selection", "Please select a window")
+        
+        def on_cancel():
+            dialog.destroy()
+        
+        ttk.Button(button_frame, text="OK", command=on_ok).pack(side=tk.LEFT, padx=10)
+        ttk.Button(button_frame, text="Cancel", command=on_cancel).pack(side=tk.LEFT, padx=10)
+        ttk.Button(button_frame, text="Refresh List", 
+                  command=lambda: self._refresh_window_list(listbox)).pack(side=tk.LEFT, padx=10)
+        
+        # Wait for dialog to close
+        dialog.wait_window()
+        
+        if selected_window:
+            self.target_window = selected_window
+            logger.info(f"Selected window: {selected_window['title']}")
+            
+        return selected_window
+    
+    def _refresh_window_list(self, listbox):
+        """Refresh the window list."""
+        listbox.delete(0, tk.END)
+        self.find_windows()
+        for window in self.windows:
+            display_text = f"{window['title'][:50]:<50} | {window['width']}x{window['height']}"
+            listbox.insert(tk.END, display_text)
+    
+    def get_window_screenshot(self, window: Dict) -> Optional[np.ndarray]:
+        """Capture screenshot of specific window."""
+        try:
+            # Bring window to front
+            win32gui.SetForegroundWindow(window['hwnd'])
+            
+            # Get window rect
+            rect = win32gui.GetWindowRect(window['hwnd'])
+            x, y, x2, y2 = rect
+            width = x2 - x
+            height = y2 - y
+            
+            # Capture window
+            hwnd_dc = win32gui.GetWindowDC(window['hwnd'])
+            mfc_dc = win32ui.CreateDCFromHandle(hwnd_dc)
+            save_dc = mfc_dc.CreateCompatibleDC()
+            
+            bitmap = win32ui.CreateBitmap()
+            bitmap.CreateCompatibleBitmap(mfc_dc, width, height)
+            save_dc.SelectObject(bitmap)
+            
+            # Copy window content
+            save_dc.BitBlt((0, 0), (width, height), mfc_dc, (0, 0), win32con.SRCCOPY)
+            
+            # Convert to numpy array
+            bmp_info = bitmap.GetInfo()
+            bmp_str = bitmap.GetBitmapBits(True)
+            img = np.frombuffer(bmp_str, dtype=np.uint8)
+            img = img.reshape((height, width, 4))  # BGRA format
+            img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+            
+            # Cleanup
+            win32gui.DeleteObject(bitmap.GetHandle())
+            save_dc.DeleteDC()
+            mfc_dc.DeleteDC()
+            win32gui.ReleaseDC(window['hwnd'], hwnd_dc)
+            
+            return img
+            
+        except Exception as e:
+            logger.error(f"Failed to capture window: {e}")
+            return None
+
+
+class RegionCalibrator:
+    """Interactive region calibration tool."""
+    
+    def __init__(self, window_detector: WindowDetector):
+        self.window_detector = window_detector
+        self.regions = {}
+        self.current_image = None
+    
+    def calibrate_regions(self) -> Dict:
+        """Interactive region calibration."""
+        if not self.window_detector.target_window:
+            messagebox.showerror("Error", "No target window selected!")
+            return {}
+        
+        # Capture current window
+        screenshot = self.window_detector.get_window_screenshot(self.window_detector.target_window)
+        if screenshot is None:
+            messagebox.showerror("Error", "Failed to capture window!")
+            return {}
+        
+        self.current_image = screenshot
+        
+        # Create calibration dialog
+        dialog = tk.Toplevel()
+        dialog.title("Region Calibration")
+        dialog.geometry("800x600")
+        
+        # Instructions
+        instructions = tk.Text(dialog, height=4, wrap=tk.WORD)
+        instructions.pack(fill=tk.X, padx=10, pady=5)
+        instructions.insert(tk.END, 
+            "Instructions:\n"
+            "1. Click 'Capture Screenshot' to get current window\n"
+            "2. Use 'Define Region' buttons to mark areas for cards, chips, etc.\n"
+            "3. Click and drag on the image to define rectangular regions\n"
+            "4. Save settings when done")
+        instructions.config(state=tk.DISABLED)
+        
+        # Control frame
+        control_frame = tk.Frame(dialog)
+        control_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        ttk.Button(control_frame, text="Capture Screenshot", 
+                  command=lambda: self._capture_and_display(dialog)).pack(side=tk.LEFT, padx=5)
+        
+        # Region definition buttons
+        regions_to_define = [
+            ("Community Cards", "community_cards"),
+            ("Pot Display", "pot_display"),
+            ("Timer", "timer"),
+            ("Player 0", "player_0"),
+            ("Player 1", "player_1"),
+            ("Player 2", "player_2")
+        ]
+        
+        for label, key in regions_to_define:
+            ttk.Button(control_frame, text=f"Define {label}", 
+                      command=lambda k=key, l=label: self._define_region(k, l)).pack(side=tk.LEFT, padx=2)
+        
+        # Canvas for image display
+        canvas_frame = tk.Frame(dialog)
+        canvas_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        
+        self.canvas = tk.Canvas(canvas_frame, bg="white")
+        self.canvas.pack(fill=tk.BOTH, expand=True)
+        
+        # Status label
+        self.status_label = tk.Label(dialog, text="Ready", relief=tk.SUNKEN, anchor=tk.W)
+        self.status_label.pack(fill=tk.X, side=tk.BOTTOM)
+        
+        # Display initial screenshot
+        self._display_image()
+        
+        dialog.wait_window()
+        return self.regions
+    
+    def _capture_and_display(self, dialog):
+        """Capture fresh screenshot and display."""
+        screenshot = self.window_detector.get_window_screenshot(self.window_detector.target_window)
+        if screenshot is not None:
+            self.current_image = screenshot
+            self._display_image()
+            self.status_label.config(text="Screenshot captured")
+        else:
+            messagebox.showerror("Error", "Failed to capture screenshot")
+    
+    def _display_image(self):
+        """Display current image on canvas."""
+        if self.current_image is None:
+            return
+        
+        # Resize image to fit canvas
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+        
+        if canvas_width <= 1 or canvas_height <= 1:
+            # Canvas not ready yet
+            self.canvas.after(100, self._display_image)
+            return
+        
+        img_height, img_width = self.current_image.shape[:2]
+        
+        # Calculate scaling
+        scale_x = canvas_width / img_width
+        scale_y = canvas_height / img_height
+        scale = min(scale_x, scale_y, 1.0)  # Don't upscale
+        
+        new_width = int(img_width * scale)
+        new_height = int(img_height * scale)
+        
+        # Resize image
+        resized = cv2.resize(self.current_image, (new_width, new_height))
+        
+        # Convert to PhotoImage
+        img_rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+        from PIL import Image, ImageTk
+        pil_image = Image.fromarray(img_rgb)
+        self.photo = ImageTk.PhotoImage(pil_image)
+        
+        # Display on canvas
+        self.canvas.delete("all")
+        self.canvas.create_image(canvas_width//2, canvas_height//2, image=self.photo)
+        
+        # Store scale for region calculations
+        self.scale = scale
+        self.display_offset_x = (canvas_width - new_width) // 2
+        self.display_offset_y = (canvas_height - new_height) // 2
+    
+    def _define_region(self, region_key: str, region_label: str):
+        """Define a region by clicking and dragging."""
+        self.status_label.config(text=f"Click and drag to define {region_label}")
+        
+        # Region selection state
+        self.selecting_region = True
+        self.region_key = region_key
+        self.region_label = region_label
+        self.start_x = None
+        self.start_y = None
+        self.rect_id = None
+        
+        # Bind mouse events
+        self.canvas.bind("<Button-1>", self._on_region_start)
+        self.canvas.bind("<B1-Motion>", self._on_region_drag)
+        self.canvas.bind("<ButtonRelease-1>", self._on_region_end)
+    
+    def _on_region_start(self, event):
+        """Start region selection."""
+        self.start_x = event.x
+        self.start_y = event.y
+    
+    def _on_region_drag(self, event):
+        """Update region rectangle while dragging."""
+        if self.start_x is not None:
+            # Delete previous rectangle
+            if self.rect_id:
+                self.canvas.delete(self.rect_id)
+            
+            # Draw new rectangle
+            self.rect_id = self.canvas.create_rectangle(
+                self.start_x, self.start_y, event.x, event.y,
+                outline="red", width=2
+            )
+    
+    def _on_region_end(self, event):
+        """Finish region selection."""
+        if self.start_x is not None:
+            # Convert canvas coordinates to image coordinates
+            canvas_x1 = min(self.start_x, event.x) - self.display_offset_x
+            canvas_y1 = min(self.start_y, event.y) - self.display_offset_y
+            canvas_x2 = max(self.start_x, event.x) - self.display_offset_x
+            canvas_y2 = max(self.start_y, event.y) - self.display_offset_y
+            
+            # Scale back to original image coordinates
+            img_x1 = int(canvas_x1 / self.scale)
+            img_y1 = int(canvas_y1 / self.scale)
+            img_x2 = int(canvas_x2 / self.scale)
+            img_y2 = int(canvas_y2 / self.scale)
+            
+            # Store region
+            self.regions[self.region_key] = {
+                "x": img_x1,
+                "y": img_y1,
+                "w": img_x2 - img_x1,
+                "h": img_y2 - img_y1
+            }
+            
+            self.status_label.config(text=f"{self.region_label} region defined: {img_x1},{img_y1} {img_x2-img_x1}x{img_y2-img_y1}")
+            
+            # Unbind mouse events
+            self.canvas.unbind("<Button-1>")
+            self.canvas.unbind("<B1-Motion>")
+            self.canvas.unbind("<ButtonRelease-1>")
+        
+        self.selecting_region = False
