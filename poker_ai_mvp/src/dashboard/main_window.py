@@ -8,6 +8,7 @@ from typing import Dict, Any, Optional, Callable
 
 from .widgets import (StatusIndicator, MetricsDisplay, GameStateDisplay,
                      PlayersDisplay, ActivityLog, ProgressChart)
+from .error_widgets import ErrorSummaryWidget
 from ..data.logger import ActivityLogger
 
 
@@ -81,17 +82,25 @@ class MainDashboard:
         # Setup metrics
         self._setup_metrics()
         
-        # Middle row - Players and activity
+        # Middle row - Players, activity, and errors
         self.middle_frame = ttk.Frame(self.main_frame)
         self.middle_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
         
-        # Players display
+        # Left column - Players display
         self.players_display = PlayersDisplay(self.middle_frame)
         self.players_display.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
         
-        # Activity log
-        self.activity_log = ActivityLog(self.middle_frame)
-        self.activity_log.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 0))
+        # Right column - Activity and errors
+        right_column = ttk.Frame(self.middle_frame)
+        right_column.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 0))
+        
+        # Activity log (top of right column)
+        self.activity_log = ActivityLog(right_column)
+        self.activity_log.pack(fill=tk.BOTH, expand=True, pady=(0, 5))
+        
+        # Error monitoring widget (bottom of right column)
+        self.error_monitor = ErrorSummaryWidget(right_column)
+        self.error_monitor.pack(fill=tk.BOTH, expand=True, pady=(5, 0))
         
         # Session statistics row
         self.session_frame = ttk.LabelFrame(self.main_frame, text="Session Statistics")

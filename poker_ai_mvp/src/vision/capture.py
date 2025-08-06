@@ -10,13 +10,14 @@ import cv2
 from loguru import logger
 
 from ..config.settings import settings
+from ..data.error_logger import log_capture_error, log_performance_issue, ErrorSeverity
 
 
 class ScreenCapture:
     """High-performance screen capture for poker client."""
     
     def __init__(self):
-        self.sct = mss.mss()
+        self.sct = None  # Initialize per thread
         self.running = False
         self.capture_thread: Optional[threading.Thread] = None
         self.frame_callback: Optional[Callable[[np.ndarray, datetime], None]] = None
@@ -27,6 +28,8 @@ class ScreenCapture:
         self.frames_captured = 0
         self.last_fps_check = time.time()
         self.current_fps = 0.0
+        self.error_count = 0
+        self.consecutive_errors = 0
         
         # Screen region
         self.monitor = {
@@ -61,11 +64,24 @@ class ScreenCapture:
         self.running = False
         if self.capture_thread:
             self.capture_thread.join(timeout=2.0)
+            
+        # Cleanup MSS instance
+        if self.sct:
+            try:
+                self.sct.close()
+            except:
+                pass
+            self.sct = None
+            
         logger.info("Screen capture stopped")
     
     def capture_single_frame(self) -> Optional[np.ndarray]:
         """Capture a single frame."""
         try:
+            # Initialize MSS instance if not exists (thread-safe)
+            if self.sct is None:
+                self.sct = mss.mss()
+                
             # Capture screenshot
             screenshot = self.sct.grab(self.monitor)
             
@@ -76,8 +92,35 @@ class ScreenCapture:
             # Convert RGB to BGR for OpenCV
             frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
             
+            # Reset consecutive error count on success
+            self.consecutive_errors = 0
             return frame
         except Exception as e:
+            self.error_count += 1
+            self.consecutive_errors += 1
+            
+            # Determine severity based on consecutive errors
+            if self.consecutive_errors > 10:
+                severity = ErrorSeverity.CRITICAL
+            elif self.consecutive_errors > 5:
+                severity = ErrorSeverity.HIGH
+            else:
+                severity = ErrorSeverity.MEDIUM
+            
+            # Log structured error with context
+            log_capture_error(
+                message=f"Screen capture failed: {str(e)}",
+                exception=e,
+                severity=severity,
+                additional_data={
+                    "monitor_region": self.monitor,
+                    "consecutive_errors": self.consecutive_errors,
+                    "total_errors": self.error_count,
+                    "current_fps": self.current_fps,
+                    "frames_captured": self.frames_captured
+                }
+            )
+            
             logger.error(f"Failed to capture frame: {e}")
             return None
     
@@ -96,8 +139,32 @@ class ScreenCapture:
             # Call callback if set
             if self.frame_callback:
                 try:
+                    callback_start = time.time()
                     self.frame_callback(frame, datetime.now())
+                    callback_time = (time.time() - callback_start) * 1000
+                    
+                    # Log performance issues if callback is slow
+                    if callback_time > 50:  # More than 50ms
+                        log_performance_issue(
+                            message=f"Slow frame callback processing: {callback_time:.1f}ms",
+                            severity=ErrorSeverity.MEDIUM if callback_time > 100 else ErrorSeverity.LOW,
+                            additional_data={
+                                "callback_time_ms": callback_time,
+                                "target_frame_time_ms": self.frame_interval * 1000,
+                                "current_fps": self.current_fps
+                            }
+                        )
+                        
                 except Exception as e:
+                    log_capture_error(
+                        message=f"Frame callback failed: {str(e)}",
+                        exception=e,
+                        severity=ErrorSeverity.HIGH,
+                        additional_data={
+                            "frames_captured": self.frames_captured,
+                            "current_fps": self.current_fps
+                        }
+                    )
                     logger.error(f"Frame callback error: {e}")
             
             # Update performance metrics
@@ -128,7 +195,10 @@ class ScreenCapture:
             "current_fps": round(self.current_fps, 1),
             "target_fps": self.fps_target,
             "frames_captured": self.frames_captured,
-            "is_running": self.running
+            "is_running": self.running,
+            "total_errors": self.error_count,
+            "consecutive_errors": self.consecutive_errors,
+            "error_rate": self.error_count / max(1, self.frames_captured) if self.frames_captured > 0 else 0
         }
     
     def update_region(self, x: int, y: int, width: int, height: int) -> None:

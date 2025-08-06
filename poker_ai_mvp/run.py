@@ -12,7 +12,17 @@ from pathlib import Path
 src_dir = Path(__file__).parent / "src"
 sys.path.insert(0, str(src_dir))
 
-from src.main import main
+try:
+    from src.main import main
+except ImportError as e:
+    print("❌ Import Error:")
+    print(f"   {e}")
+    print("\n💡 Solutions:")
+    print("   1. Run: setup_python.bat")
+    print("   2. Activate venv: venv\\Scripts\\activate.bat")
+    print("   3. Install deps: pip install -r requirements.txt")
+    input("\nPress Enter to exit...")
+    exit(1)
 
 if __name__ == "__main__":
     main()

@@ -97,13 +97,15 @@ class RegionSelector:
     def __init__(self, full_screen_image: np.ndarray):
         self.full_screen = full_screen_image
         self.selected_region = None
+        self.photo_references = []  # Store PhotoImage references
         
     def select_region(self) -> Optional[Dict]:
         """Show interactive region selection dialog."""
-        # Create selection window
-        root = tk.Tk()
+        # Create selection window using Toplevel to avoid multiple Tk() instances
+        root = tk.Toplevel()
         root.title("Select Poker Client Region")
         root.state('zoomed')  # Maximize window
+        root.grab_set()  # Make this window modal
         
         # Instructions
         instructions = tk.Label(root, 
@@ -180,11 +182,33 @@ class RegionSelector:
         # Create PIL image
         pil_image = Image.fromarray(rgb_image)
         
-        # Store reference to prevent garbage collection
-        self.photo = ImageTk.PhotoImage(pil_image)
+        # Get canvas size for scaling
+        canvas.update_idletasks()
+        canvas_width = canvas.winfo_width()
+        canvas_height = canvas.winfo_height()
+        
+        # Scale image to fit canvas while maintaining aspect ratio
+        if canvas_width > 1 and canvas_height > 1:
+            img_width, img_height = pil_image.size
+            scale_x = canvas_width / img_width
+            scale_y = canvas_height / img_height
+            scale = min(scale_x, scale_y, 1.0)  # Don't scale up, only down
+            
+            if scale < 1.0:
+                new_width = int(img_width * scale)
+                new_height = int(img_height * scale)
+                pil_image = pil_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        
+        # Create PhotoImage and store reference on canvas object
+        photo = ImageTk.PhotoImage(pil_image)
+        canvas.photo = photo  # Store reference on canvas object
+        self.photo_references.append(photo)
+        
+        # Clear canvas first
+        canvas.delete("all")
         
         # Display on canvas
-        canvas.create_image(0, 0, anchor=tk.NW, image=self.photo)
+        canvas.create_image(0, 0, anchor=tk.NW, image=photo)
         canvas.configure(scrollregion=canvas.bbox("all"))
     
     def _on_mouse_down(self, event):
@@ -291,12 +315,15 @@ class RegionDefinitionDialog:
     def __init__(self, poker_image: np.ndarray):
         self.poker_image = poker_image
         self.regions = {}
+        self.photo_references = []  # Store PhotoImage references
         
     def define_regions(self) -> Dict:
         """Define poker game regions interactively."""
-        root = tk.Tk()
+        # Create Toplevel instead of Tk() to avoid multiple Tk() instances
+        root = tk.Toplevel()
         root.title("Define Poker Game Regions - SAFE MODE")
         root.geometry("1000x700")
+        root.grab_set()  # Make this window modal
         
         # Instructions
         instructions = tk.Text(root, height=4, wrap=tk.WORD)
@@ -367,8 +394,33 @@ class RegionDefinitionDialog:
         rgb_image = cv2.cvtColor(self.poker_image, cv2.COLOR_BGR2RGB)
         pil_image = Image.fromarray(rgb_image)
         
-        self.photo = ImageTk.PhotoImage(pil_image)
-        self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo)
+        # Get canvas size for scaling
+        self.canvas.update_idletasks()
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+        
+        # Scale image to fit canvas while maintaining aspect ratio
+        if canvas_width > 1 and canvas_height > 1:
+            img_width, img_height = pil_image.size
+            scale_x = canvas_width / img_width
+            scale_y = canvas_height / img_height
+            scale = min(scale_x, scale_y, 1.0)  # Don't scale up, only down
+            
+            if scale < 1.0:
+                new_width = int(img_width * scale)
+                new_height = int(img_height * scale)
+                pil_image = pil_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        
+        # Create PhotoImage and store reference on canvas object
+        photo = ImageTk.PhotoImage(pil_image)
+        self.canvas.photo = photo  # Store reference on canvas object
+        self.photo_references.append(photo)
+        
+        # Clear canvas first
+        self.canvas.delete("all")
+        
+        # Display image
+        self.canvas.create_image(0, 0, anchor=tk.NW, image=photo)
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
     
     def _start_region_definition(self, region_key: str, region_label: str):

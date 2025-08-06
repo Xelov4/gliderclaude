@@ -22,7 +22,7 @@ def setup_cards_dataset():
     logger.info("Setting up playing cards dataset...")
     
     # Check if dataset exists
-    dataset_path = Path("C:/Users/McGrady/.cache/kagglehub/datasets/andy8744/playing-cards-object-detection-dataset/versions/4")
+    dataset_path = Path("C:/Users/BuzzerBeater/.cache/kagglehub/datasets/andy8744/playing-cards-object-detection-dataset/versions/4")
     
     if not dataset_path.exists():
         logger.error(f"Cards dataset not found at: {dataset_path}")

@@ -1,0 +1,44 @@
+{
+  "screen_capture": {
+    "monitor": 0,
+    "fps": 30,
+    "region": {
+      "x": 0,
+      "y": 0,
+      "width": 5120,
+      "height": 1440
+    }
+  },
+  "vision": {
+    "card_detection": {
+      "model_path": "models/yolov9_cards.pt",
+      "confidence_threshold": 0.8,
+      "nms_threshold": 0.4
+    },
+    "text_recognition": {
+      "ocr_language": "en",
+      "confidence_threshold": 0.7
+    }
+  },
+  "database": {
+    "path": "data/poker_vision.db",
+    "backup_frequency": 3600,
+    "retention_days": 30
+  },
+  "dashboard": {
+    "update_frequency_ms": 100,
+    "max_log_entries": 1000,
+    "auto_scroll": true
+  },
+  "game_client": {
+    "window_title": "Poker Client",
+    "table_regions": {
+      "community_cards": {"x": 2120, "y": 630, "w": 1080, "h": 240},
+      "pot_display": {"x": 3240, "y": 520, "w": 400, "h": 80},
+      "timer": {"x": 4640, "y": 120, "w": 400, "h": 80},
+      "player_0": {"x": 1900, "y": 1000, "w": 1400, "h": 400},
+      "player_1": {"x": 1000, "y": 400, "w": 1400, "h": 400},
+      "player_2": {"x": 3600, "y": 400, "w": 1400, "h": 400}
+    }
+  }
+}

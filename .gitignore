@@ -1,0 +1,57 @@
+# Dataset folders (too heavy for git)
+data/andy8744/
+data/cards/images/
+data/hosseinah1/
+
+# Model files (large)
+*.pt
+models/*.pt
+poker_ai_mvp/*.pt
+
+# Virtual environments
+venv/
+poker_ai_mvp/venv/
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Logs
+logs/
+*.log
+poker_ai_mvp/logs/
+
+# Training outputs
+runs/
+training_output/
+poker_ai_mvp/runs/
+poker_ai_mvp/training_output/
+poker_ai_mvp/wandb/
+
+# Database files (local data)
+*.db
+data/*.db
+poker_ai_mvp/data/*.db
+
+# Cache files
+*.cache
+labels.cache
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+*.tmp

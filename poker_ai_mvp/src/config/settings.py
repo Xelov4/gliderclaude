@@ -84,5 +84,8 @@ class Settings(BaseModel):
             json.dump(self.model_dump(), f, indent=2)
 
 
-# Global settings instance
-settings = Settings.load_from_file("config/settings.json")
+# Global settings instance - use absolute path resolution
+import os
+_current_dir = Path(__file__).parent.parent.parent  # Go up to project root
+_config_path = _current_dir / "config" / "settings.json"
+settings = Settings.load_from_file(str(_config_path))

@@ -1,7 +1,7 @@
 """Data models for Poker AI MVP."""
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Any
 from enum import Enum
 
 

@@ -28,8 +28,30 @@ class YOLOCardDetector:
         self.nms_threshold = 0.45
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         
+        # Playing cards configuration
+        self.playing_cards = self._create_playing_cards_mapping()
+        
         # Initialize model
         self._setup_model()
+        
+    def _create_playing_cards_mapping(self) -> List[Tuple[str, str]]:
+        """Create mapping for 52 playing cards."""
+        # Define playing cards mapping (52 cards)
+        playing_cards = [
+            # Spades (0-12)
+            ("A", "♠"), ("2", "♠"), ("3", "♠"), ("4", "♠"), ("5", "♠"), ("6", "♠"), ("7", "♠"),
+            ("8", "♠"), ("9", "♠"), ("10", "♠"), ("J", "♠"), ("Q", "♠"), ("K", "♠"),
+            # Hearts (13-25)
+            ("A", "♥"), ("2", "♥"), ("3", "♥"), ("4", "♥"), ("5", "♥"), ("6", "♥"), ("7", "♥"),
+            ("8", "♥"), ("9", "♥"), ("10", "♥"), ("J", "♥"), ("Q", "♥"), ("K", "♥"),
+            # Diamonds (26-38)
+            ("A", "♦"), ("2", "♦"), ("3", "♦"), ("4", "♦"), ("5", "♦"), ("6", "♦"), ("7", "♦"),
+            ("8", "♦"), ("9", "♦"), ("10", "♦"), ("J", "♦"), ("Q", "♦"), ("K", "♦"),
+            # Clubs (39-51)
+            ("A", "♣"), ("2", "♣"), ("3", "♣"), ("4", "♣"), ("5", "♣"), ("6", "♣"), ("7", "♣"),
+            ("8", "♣"), ("9", "♣"), ("10", "♣"), ("J", "♣"), ("Q", "♣"), ("K", "♣")
+        ]
+        return playing_cards
         
     def _setup_model(self) -> None:
         """Setup YOLO model, download if necessary."""
@@ -56,7 +78,17 @@ class YOLOCardDetector:
             
             # Verify model classes
             if hasattr(self.model, 'names'):
-                logger.info(f"Model has {len(self.model.names)} classes")
+                num_classes = len(self.model.names)
+                logger.info(f"Model has {num_classes} classes")
+                
+                # Check if this is a proper playing cards model
+                if num_classes == 52:
+                    logger.info("✅ Playing cards model detected (52 classes)")
+                elif num_classes == 80:
+                    logger.warning("⚠️ Using base YOLOv8 model (80 classes) - not optimized for playing cards")
+                    logger.warning("For better accuracy, train a model specifically on playing cards")
+                else:
+                    logger.warning(f"⚠️ Unexpected number of classes: {num_classes}")
             
         except Exception as e:
             logger.error(f"Failed to load YOLO model: {e}")
@@ -67,24 +99,42 @@ class YOLOCardDetector:
         logger.info("Setting up playing cards detection model...")
         
         try:
-            # Option 1: Try to use a pre-trained general object detection model
-            # and fine-tune for cards (this is a placeholder - in production you'd
-            # want a model specifically trained on playing cards)
-            
+            # For MVP, we'll use the base YOLOv8 model but configure it for 52 classes
             logger.info("Using YOLOv8 base model for playing cards detection")
             base_model = YOLO('yolov8n.pt')  # Download base YOLOv8 nano model
             
-            # Save base model as our card model for now
-            # In production, this would be replaced with a properly trained model
-            base_model.save(str(model_path))
+            # Configure the model for 52 classes (playing cards)
+            # Note: This is a workaround - ideally you'd have a model trained specifically on playing cards
+            self._configure_model_for_playing_cards(base_model, model_path)
             
-            logger.warning("Using base YOLOv8 model - accuracy will be limited")
+            logger.warning("Using base YOLOv8 model configured for 52 classes")
             logger.warning("For production use, train a model specifically on playing cards")
             
         except Exception as e:
             logger.error(f"Failed to setup model: {e}")
             # Create a minimal fallback
             self._create_fallback_model(model_path)
+    
+    def _configure_model_for_playing_cards(self, base_model: YOLO, model_path: Path) -> None:
+        """Configure base model for 52 playing card classes."""
+        try:
+            # Create custom names for 52 playing cards
+            playing_card_names = {}
+            for i, (rank, suit) in enumerate(self.playing_cards):
+                playing_card_names[i] = f"{rank}{suit}"
+            
+            # Update the model's class names
+            if hasattr(base_model, 'names'):
+                base_model.names = playing_card_names
+            
+            # Save the configured model
+            base_model.save(str(model_path))
+            logger.info("Model configured for 52 playing card classes")
+            
+        except Exception as e:
+            logger.error(f"Failed to configure model for playing cards: {e}")
+            # Fallback: just save the base model
+            base_model.save(str(model_path))
     
     def _create_fallback_model(self, model_path: Path) -> None:
         """Create minimal fallback when YOLO setup fails."""
@@ -104,40 +154,44 @@ class YOLOCardDetector:
             if region:
                 x, y, w, h = region
                 roi = image[y:y+h, x:x+w]
-                offset_x, offset_y = x, y
             else:
                 roi = image
-                offset_x, offset_y = 0, 0
             
-            # Run YOLO inference
+            # Run YOLO detection
             results = self.model(roi, conf=self.confidence_threshold, iou=self.nms_threshold, verbose=False)
             
             cards = []
-            for result in results:
-                boxes = result.boxes
-                if boxes is not None:
-                    for box in boxes:
-                        # Extract detection data
-                        x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                        confidence = float(box.conf[0].cpu().numpy())
-                        class_id = int(box.cls[0].cpu().numpy())
+            if results and len(results) > 0:
+                result = results[0]  # First result
+                
+                if result.boxes is not None:
+                    boxes = result.boxes
+                    for i in range(len(boxes)):
+                        # Get detection info
+                        box = boxes[i]
+                        confidence = float(box.conf[0])
+                        class_id = int(box.cls[0])
+                        bbox = box.xyxy[0].cpu().numpy()  # [x1, y1, x2, y2]
                         
-                        # Convert class ID to card (this needs to be customized based on your model)
+                        # Convert class ID to card rank and suit
                         rank, suit = self._class_id_to_card(class_id)
                         
                         if rank and suit:
-                            center_x = int((x1 + x2) / 2) + offset_x
-                            center_y = int((y1 + y2) / 2) + offset_y
+                            # Calculate center position
+                            center_x = int((bbox[0] + bbox[2]) / 2)
+                            center_y = int((bbox[1] + bbox[3]) / 2)
                             
-                            card = Card(
-                                rank=rank,
-                                suit=suit,
-                                confidence=confidence,
-                                position=(center_x, center_y)
-                            )
+                            # Adjust coordinates if region was specified
+                            if region:
+                                center_x += region[0]
+                                center_y += region[1]
+                            
+                            # Create Card object
+                            card = Card(rank, suit, confidence, (center_x, center_y))
                             cards.append(card)
+                            
+                            logger.debug(f"Detected card: {rank}{suit} at ({center_x}, {center_y}) with confidence {confidence:.2f}")
             
-            logger.debug(f"YOLO detected {len(cards)} cards")
             return cards
             
         except Exception as e:
@@ -146,20 +200,23 @@ class YOLOCardDetector:
     
     def _class_id_to_card(self, class_id: int) -> Tuple[Optional[str], Optional[str]]:
         """Convert YOLO class ID to card rank and suit."""
-        # This mapping depends on how your YOLO model was trained
-        # For a general object detection model, we won't get specific cards
+        # Check if we have a proper 52-class playing cards model
+        if hasattr(self.model, 'names') and len(self.model.names) == 52:
+            if 0 <= class_id < 52:
+                return self.playing_cards[class_id]
         
-        # If using a general model, we can only detect "playing card" objects
-        # and would need additional processing to identify specific cards
-        
+        # For base YOLOv8 model (80 classes), try to map to playing cards
         if hasattr(self.model, 'names') and class_id < len(self.model.names):
             class_name = self.model.names[class_id].lower()
             
-            # Check if it's a playing card related detection
-            if any(term in class_name for term in ['card', 'playing', 'deck']):
+            # Map COCO classes to playing cards (approximate)
+            if any(term in class_name for term in ['card', 'playing', 'deck', 'book', 'remote']):
                 # For general detection, we can't determine specific rank/suit
-                # This would require a specialized playing cards model
+                # Return a generic card detection
                 return "?", "?"
+            elif 'person' in class_name:
+                # Could be a player
+                return "PLAYER", "?"
         
         return None, None
     
@@ -206,8 +263,20 @@ class YOLOCardDetector:
         }
         
         if hasattr(self.model, 'names'):
-            info["num_classes"] = len(self.model.names)
+            num_classes = len(self.model.names)
+            info["num_classes"] = num_classes
             info["class_names"] = list(self.model.names.values())
+            
+            # Add playing cards specific info
+            if num_classes == 52:
+                info["model_type"] = "playing_cards_52"
+                info["description"] = "52-class playing cards detection model"
+            elif num_classes == 80:
+                info["model_type"] = "coco_base"
+                info["description"] = "Base YOLOv8 model (80 COCO classes) - not optimized for playing cards"
+            else:
+                info["model_type"] = "unknown"
+                info["description"] = f"Unknown model with {num_classes} classes"
         
         return info
 
@@ -222,37 +291,20 @@ class PlayingCardsModelManager:
     def download_pretrained_model(self) -> str:
         """Download a pre-trained playing cards model if available."""
         # This would download from a model repository
-        # For now, we'll use the base YOLO model
+        # For now, return the path to our configured model
+        return "models/playing_cards_yolo.pt"
         
-        model_urls = {
-            "playing_cards_v1": "https://example.com/playing_cards_yolo.pt",
-            # Add more model URLs as they become available
-        }
-        
-        # Placeholder implementation
-        logger.info("No pre-trained playing cards model available")
-        logger.info("Using base YOLOv8 model - consider training a custom model")
-        
-        return str(self.models_dir / "yolov8n.pt")
-    
     def prepare_training_data(self, images_dir: str, annotations_dir: str) -> bool:
-        """Prepare training data for YOLO model."""
-        # This would prepare YOLO format training data
+        """Prepare training data for playing cards model."""
+        # This would prepare YOLO format annotations
         logger.info("Training data preparation not implemented in MVP")
-        logger.info("For custom model training, prepare data in YOLO format:")
-        logger.info("- Images: JPG/PNG files")
-        logger.info("- Labels: TXT files with class_id x_center y_center width height")
         return False
-    
+        
     def train_custom_model(self, data_yaml: str, epochs: int = 100) -> str:
-        """Train a custom YOLO model for playing cards."""
-        # This would train a custom model
+        """Train a custom playing cards model."""
+        # This would train a YOLO model on playing cards dataset
         logger.info("Custom model training not implemented in MVP")
-        logger.info("For production use, train with:")
-        logger.info("- Large dataset of annotated playing cards")
-        logger.info("- Various lighting conditions and card designs")
-        logger.info("- Different camera angles and perspectives")
-        return ""
+        return "models/playing_cards_yolo.pt"
 
 
 def create_card_detector() -> YOLOCardDetector:

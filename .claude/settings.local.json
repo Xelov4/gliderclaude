@@ -1,12 +1,8 @@
 {
   "permissions": {
+    "defaultMode": "bypassPermissions",
     "allow": [
-      "Bash(mkdir:*)",
-      "Bash(git config:*)",
-      "Bash(git commit:*)",
-      "Bash(git remote add:*)",
-      "Bash(git add:*)"
-    ],
-    "deny": []
+      "Bash(py:*)"
+    ]
   }
 }

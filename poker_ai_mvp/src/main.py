@@ -16,6 +16,8 @@ from .vision.state_parser import GameStateParser
 from .data.database import DatabaseManager
 from .data.logger import DataLogger
 from .data.models import GameState, VisionMetrics
+from .data.error_logger import (get_error_logger, log_database_error, log_gui_error, 
+                               log_performance_issue, ErrorSeverity)
 from .dashboard.main_window import MainDashboard
 from .config.settings import settings
 
@@ -24,6 +26,9 @@ class PokerAIApplication:
     """Main application class for Poker AI MVP."""
     
     def __init__(self):
+        # Initialize error logging first
+        self.error_logger = get_error_logger()
+        
         # Core components
         self.screen_capture = ScreenCapture()
         self.state_parser = GameStateParser()
@@ -104,6 +109,19 @@ class PokerAIApplication:
             
         except Exception as e:
             error_msg = f"Failed to start system: {str(e)}"
+            
+            # Log structured error
+            log_database_error(
+                message=f"System startup failed: {error_msg}",
+                exception=e,
+                severity=ErrorSeverity.CRITICAL,
+                session_id=self.session_id,
+                additional_data={
+                    "startup_phase": "system_initialization",
+                    "session_id": self.session_id
+                }
+            )
+            
             logger.error(error_msg)
             self.dashboard.show_error("Startup Error", error_msg)
     
@@ -138,6 +156,20 @@ class PokerAIApplication:
             
         except Exception as e:
             error_msg = f"Error stopping system: {str(e)}"
+            
+            # Log structured error
+            log_database_error(
+                message=f"System shutdown failed: {error_msg}",
+                exception=e,
+                severity=ErrorSeverity.HIGH,
+                session_id=self.session_id,
+                additional_data={
+                    "shutdown_phase": "system_cleanup",
+                    "session_id": self.session_id,
+                    "frames_processed": self.processing_stats["frames_processed"]
+                }
+            )
+            
             logger.error(error_msg)
             self.dashboard.show_error("Shutdown Error", error_msg)
     
@@ -154,6 +186,21 @@ class PokerAIApplication:
             
             # Calculate processing time
             processing_time_ms = int((time.time() - start_time) * 1000)
+            
+            # Log performance issues if processing is slow
+            if processing_time_ms > 100:  # More than 100ms
+                severity = ErrorSeverity.HIGH if processing_time_ms > 200 else ErrorSeverity.MEDIUM
+                log_performance_issue(
+                    message=f"Slow frame processing: {processing_time_ms}ms",
+                    severity=severity,
+                    session_id=self.session_id,
+                    additional_data={
+                        "processing_time_ms": processing_time_ms,
+                        "frame_number": self.processing_stats["frames_processed"],
+                        "target_fps": 30,
+                        "current_fps": self.processing_stats["frames_per_second"]
+                    }
+                )
             
             # Update stats
             self.processing_stats["frames_processed"] += 1
@@ -264,10 +311,8 @@ class PokerAIApplication:
             if self.vision_debugger is None:
                 self.vision_debugger = VisionDebugger()
             
-            # Launch in separate thread to avoid blocking
-            import threading
-            debug_thread = threading.Thread(target=self.vision_debugger.launch_debugger, daemon=True)
-            debug_thread.start()
+            # Launch debugger in main thread (Tkinter requirement)
+            self.vision_debugger.launch_debugger()
             
             self.dashboard.add_activity("Debug tools launched")
             

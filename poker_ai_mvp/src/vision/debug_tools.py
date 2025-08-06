@@ -12,26 +12,35 @@ from typing import Dict, List, Any, Optional
 from ..data.models import Card, Player, GameState
 from .detection import CardDetector
 from .ocr import TextRecognizer
+from .state_parser import GameStateParser
 
 
 class VisionDebugger:
-    """Interactive vision debugging and annotation tool."""
+    """Vision system debugging tools."""
     
     def __init__(self):
-        self.card_detector = CardDetector()
+        # Import here to avoid circular imports
+        from .yolo_detector import create_card_detector
+        self.card_detector = create_card_detector()
         self.text_recognizer = TextRecognizer()
+        self.game_parser = GameStateParser()
+        self.photo_references = []  # Store PhotoImage references
+        self.debug_window = None
         self.current_image = None
         self.detections = {}
         self.annotations = {}
         
     def launch_debugger(self):
         """Launch the debug GUI."""
-        self.root = tk.Tk()
+        # Create Toplevel instead of Tk() to avoid multiple Tk() instances
+        self.root = tk.Toplevel()
         self.root.title("Poker Vision Debugger")
         self.root.geometry("1200x800")
+        self.root.grab_set()  # Make this window modal
         
         self._create_debug_gui()
-        self.root.mainloop()
+        # Don't call mainloop() since we're using Toplevel
+        # The main application's mainloop will handle this window
     
     def _create_debug_gui(self):
         """Create debug GUI interface."""
@@ -298,11 +307,32 @@ class VisionDebugger:
         # Convert to PhotoImage
         img_rgb = cv2.cvtColor(display_image, cv2.COLOR_BGR2RGB)
         pil_image = Image.fromarray(img_rgb)
-        self.photo = ImageTk.PhotoImage(pil_image)
+        
+        # Get canvas size for scaling
+        self.canvas.update_idletasks()
+        canvas_width = self.canvas.winfo_width()
+        canvas_height = self.canvas.winfo_height()
+        
+        # Scale image to fit canvas while maintaining aspect ratio
+        if canvas_width > 1 and canvas_height > 1:
+            img_width, img_height = pil_image.size
+            scale_x = canvas_width / img_width
+            scale_y = canvas_height / img_height
+            scale = min(scale_x, scale_y, 1.0)  # Don't scale up, only down
+            
+            if scale < 1.0:
+                new_width = int(img_width * scale)
+                new_height = int(img_height * scale)
+                pil_image = pil_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        
+        # Create PhotoImage and store reference on canvas object
+        photo = ImageTk.PhotoImage(pil_image)
+        self.canvas.photo = photo  # Store reference on canvas object
+        self.photo_references.append(photo)
         
         # Update canvas
         self.canvas.delete("all")
-        self.canvas.create_image(0, 0, anchor=tk.NW, image=self.photo)
+        self.canvas.create_image(0, 0, anchor=tk.NW, image=photo)
         
         # Update scroll region
         self.canvas.configure(scrollregion=self.canvas.bbox("all"))
@@ -410,7 +440,8 @@ class AnnotationDialog:
         self.dialog = tk.Toplevel(parent)
         self.dialog.title("Manual Annotation")
         self.dialog.geometry("800x600")
-        self.dialog.grab_set()
+        self.dialog.grab_set()  # Make this window modal
+        self.dialog.transient(parent)  # Make this window transient to parent
         
         self._create_annotation_gui()
     
@@ -441,6 +472,7 @@ class AnnotationDialog:
         
         pil_image = pil_image.resize((new_width, new_height))
         self.photo = ImageTk.PhotoImage(pil_image)
+        self.canvas.photo = self.photo  # Store reference on canvas object
         self.canvas.create_image(400, 200, image=self.photo)
         
         # Bind click events
