@@ -3,11 +3,6 @@ data/andy8744/
 data/cards/images/
 data/hosseinah1/
 
-# Model files (large)
-*.pt
-models/*.pt
-poker_ai_mvp/*.pt
-
 # Virtual environments
 venv/
 poker_ai_mvp/venv/
